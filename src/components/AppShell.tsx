@@ -20,6 +20,9 @@ export function AppShell() {
               <Receipt className="h-4 w-4" />
             </div>
             <span className="font-display font-semibold tracking-tight text-[15px]">Notaku</span>
+            <span className="ml-1.5 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary tracking-tight">
+              v1 · 19 Jun
+            </span>
           </Link>
         </div>
       </header>
