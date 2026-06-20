@@ -10,7 +10,8 @@ import { toast } from "sonner";
 import {
   db, calcNoteTotals, deriveCustomers, deriveTags,
   generateNoteNumber, uid,
-  type Note, type NoteItem, type Preset,
+  PAYMENT_METHODS, PAYMENT_LABELS,
+  type Note, type NoteItem, type Preset, type PaymentMethod,
 } from "@/lib/storage";
 import { formatIDR, formatIDRInput, parseIDRInput, toDateInput } from "@/lib/format";
 import { tapHaptic } from "@/lib/haptic";
@@ -84,6 +85,8 @@ type Draft = {
   customerPhone: string;
   items: NoteItem[];
   discount: number;
+  paymentMethod: PaymentMethod;
+  cashReceived: number;
   tags: string[];
   noteText: string;
   updatedAt: number;
@@ -159,6 +162,8 @@ function BuatPage() {
   const [customerPhone, setCustomerPhone] = useState(initial?.customerPhone ?? "");
   const [items, setItems] = useState<NoteItem[]>(initial?.items?.length ? initial.items : [emptyItem()]);
   const [discount, setDiscount] = useState<number>(initial?.discount ?? 0);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "tunai");
+  const [cashReceived, setCashReceived] = useState<number>(initial?.cashReceived ?? 0);
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [noteText, setNoteText] = useState(initial?.noteText ?? "");
   const hadInitialDraft = useRef(!!initial && !isDraftEmpty({ customerName: initial.customerName, customerPhone: initial.customerPhone, items: initial.items, discount: initial.discount, tags: initial.tags ?? [], noteText: initial.noteText }));
@@ -180,6 +185,8 @@ function BuatPage() {
     setCustomerName(src.customerName); setCustomerPhone(src.customerPhone);
     setItems(src.items.map((it) => ({ ...it })));
     setDiscount(src.discount);
+    setPaymentMethod(src.paymentMethod);
+    setCashReceived(src.cashReceived);
     setTags([...src.tags]);
     setNoteText(src.note);
   }, [editingId, fromId, notes]);
@@ -187,7 +194,7 @@ function BuatPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (editingId || fromId) return;
-    const draft = { date, customerName, customerPhone, items, discount, tags, noteText };
+    const draft = { date, customerName, customerPhone, items, discount, paymentMethod, cashReceived, tags, noteText };
     const t = setTimeout(() => {
       try {
         if (isDraftEmpty(draft)) localStorage.removeItem(DRAFT_KEY);
@@ -197,7 +204,7 @@ function BuatPage() {
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [date, customerName, customerPhone, items, discount, tags, noteText, editingId, fromId]);
+  }, [date, customerName, customerPhone, items, discount, paymentMethod, cashReceived, tags, noteText, editingId, fromId]);
 
   useEffect(() => {
     if (hadInitialDraft.current) { toast.success("Draf dipulihkan"); hadInitialDraft.current = false; }
@@ -264,6 +271,8 @@ function BuatPage() {
           customerPhone: customerPhone.trim(),
           items: cleaned,
           discount,
+          paymentMethod,
+          cashReceived: paymentMethod === "tunai" ? cashReceived : 0,
           tags,
           note: noteText.trim(),
           date: new Date(date + "T" + new Date(existing.date).toISOString().slice(11, 19)).toISOString(),
@@ -279,7 +288,10 @@ function BuatPage() {
         date: new Date(date + "T" + new Date().toISOString().slice(11, 19)).toISOString(),
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
-        items: cleaned, discount, tags, note: noteText.trim(),
+        items: cleaned, discount,
+        paymentMethod,
+        cashReceived: paymentMethod === "tunai" ? cashReceived : 0,
+        tags, note: noteText.trim(),
         createdAt: now, updatedAt: now,
       };
       await db.setSeq(seq);
@@ -428,6 +440,15 @@ function BuatPage() {
         </div>
       </div>
 
+      {/* Pembayaran */}
+      <PaymentSection
+        total={totals.total}
+        paymentMethod={paymentMethod}
+        setPaymentMethod={setPaymentMethod}
+        cashReceived={cashReceived}
+        setCashReceived={setCashReceived}
+      />
+
       <Button size="lg" className="tap w-full h-12 rounded-full shadow-pop text-[15px] font-semibold" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
         <Check className="h-4 w-4" />
         {editingId ? "Simpan perubahan" : "Simpan"}
@@ -439,6 +460,115 @@ function BuatPage() {
 
 function Row({ label, value, muted }: { label: React.ReactNode; value: React.ReactNode; muted?: boolean }) {
   return <div className={cn("flex justify-between", muted && "text-muted-foreground")}><span>{label}</span><span className="tabular-nums">{value}</span></div>;
+}
+
+function cashSuggestions(total: number): number[] {
+  if (total <= 0) return [];
+  const steps = [5000, 10000, 20000, 50000, 100000];
+  const set = new Set<number>();
+  for (const s of steps) {
+    const up = Math.ceil(total / s) * s;
+    if (up > total) set.add(up);
+  }
+  return [...set].sort((a, b) => a - b).slice(0, 3);
+}
+
+function PaymentSection({
+  total, paymentMethod, setPaymentMethod, cashReceived, setCashReceived,
+}: {
+  total: number;
+  paymentMethod: PaymentMethod;
+  setPaymentMethod: (m: PaymentMethod) => void;
+  cashReceived: number;
+  setCashReceived: (n: number) => void;
+}) {
+  const isTunai = paymentMethod === "tunai";
+  const kembalian = cashReceived - total;
+  const suggestions = useMemo(() => cashSuggestions(total), [total]);
+  return (
+    <section className="space-y-2">
+      <SectionLabel>Pembayaran</SectionLabel>
+      <div className="flex gap-1.5">
+        {PAYMENT_METHODS.map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => { tapHaptic(); setPaymentMethod(m); }}
+            className={cn(
+              "tap flex-1 rounded-full px-3 py-2 text-xs font-medium border",
+              paymentMethod === m
+                ? "bg-primary text-primary-foreground border-primary shadow-soft"
+                : "bg-card text-muted-foreground border-border hover:text-foreground",
+            )}
+          >
+            {PAYMENT_LABELS[m]}
+          </button>
+        ))}
+      </div>
+
+      {isTunai && (
+        <div className="rounded-2xl bg-card border border-border shadow-soft p-3 space-y-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground shrink-0">Uang diterima</span>
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">Rp</span>
+              <input
+                aria-label="Uang tunai diterima"
+                inputMode="decimal" enterKeyHint="done" placeholder="0"
+                value={formatIDRInput(cashReceived)}
+                onChange={(e) => setCashReceived(parseIDRInput(e.target.value))}
+                onFocus={(e) => e.target.select()}
+                className="w-full h-11 pl-8 pr-2 bg-surface rounded-full text-right text-sm focus:outline-none focus:ring-2 focus:ring-ring/30"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => { tapHaptic(); setCashReceived(total); }}
+              className="tap rounded-full bg-surface border border-border px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              Uang pas
+            </button>
+            {suggestions.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => { tapHaptic(); setCashReceived(s); }}
+                className="tap rounded-full bg-surface border border-border px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground tabular-nums"
+              >
+                {formatIDRInput(s)}
+              </button>
+            ))}
+            {cashReceived > 0 && (
+              <button
+                type="button"
+                onClick={() => { tapHaptic(); setCashReceived(0); }}
+                className="tap rounded-full px-3 py-1 text-[11px] text-muted-foreground hover:text-destructive"
+              >
+                Hapus
+              </button>
+            )}
+          </div>
+
+          {cashReceived > 0 && (
+            kembalian >= 0 ? (
+              <div className="flex items-center justify-between text-sm pt-0.5">
+                <span className="text-muted-foreground">Kembalian</span>
+                <span className="font-display font-semibold text-lg tracking-tight tabular-nums">{formatIDR(kembalian)}</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between text-sm pt-0.5 text-destructive">
+                <span>Kurang</span>
+                <span className="font-medium tabular-nums">{formatIDR(-kembalian)}</span>
+              </div>
+            )
+          )}
+        </div>
+      )}
+    </section>
+  );
 }
 
 type ItemRowProps = { item: NoteItem; presets?: Preset[]; onChange: (p: Partial<NoteItem>) => void; onRemove?: () => void };

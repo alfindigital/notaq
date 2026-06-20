@@ -1,5 +1,5 @@
 import type { Business, Note } from "./storage";
-import { calcNoteTotals } from "./storage";
+import { calcNoteTotals, PAYMENT_LABELS } from "./storage";
 import { formatIDR, formatDateTime } from "./format";
 
 export function buildReceiptText(note: Note, business: Business): string {
@@ -25,6 +25,12 @@ export function buildReceiptText(note: Note, business: Business): string {
     lines.push(padBetween("Diskon", "- " + formatIDR(note.discount), 32));
   }
   lines.push(padBetween("*TOTAL*", `*${formatIDR(totals.total)}*`, 32));
+  lines.push("--------------------------------");
+  lines.push(padBetween("Bayar", PAYMENT_LABELS[note.paymentMethod], 32));
+  if (note.paymentMethod === "tunai" && note.cashReceived > 0) {
+    lines.push(padBetween("Tunai", formatIDR(note.cashReceived), 32));
+    lines.push(padBetween("Kembali", formatIDR(Math.max(0, note.cashReceived - totals.total)), 32));
+  }
   lines.push("--------------------------------");
   if (note.note) lines.push(`Catatan: ${note.note}`);
   if (business.receiptFooter) lines.push(business.receiptFooter);

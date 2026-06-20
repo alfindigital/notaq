@@ -15,7 +15,7 @@ function getStore() {
   return store;
 }
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const KEYS = {
   business: "business",
@@ -79,6 +79,15 @@ export const NoteItemSchema = z.object({
 });
 export type NoteItem = z.infer<typeof NoteItemSchema>;
 
+// Payment methods (fixed for v1).
+export const PAYMENT_METHODS = ["tunai", "transfer", "qris"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  tunai: "Tunai",
+  transfer: "Transfer",
+  qris: "QRIS",
+};
+
 export const NoteSchema = z.object({
   id: z.string(),
   number: z.string(),
@@ -87,6 +96,8 @@ export const NoteSchema = z.object({
   customerPhone: z.string().trim().max(20).default(""),
   items: z.array(NoteItemSchema).min(1).max(100),
   discount: z.number().int().min(0).max(1_000_000_000).default(0),
+  paymentMethod: z.enum(PAYMENT_METHODS).default("tunai"),
+  cashReceived: z.number().int().min(0).max(1_000_000_000).default(0), // uang tunai diterima; 0 = tak dicatat
   tags: z.array(z.string().trim().min(1).max(20)).default([]),
   note: z.string().trim().max(200).default(""),
   createdAt: z.string().default(() => new Date().toISOString()),
@@ -174,6 +185,9 @@ function migrateNote(raw: unknown): Note | null {
     : [];
   if (!items.length) return null;
   const now = new Date().toISOString();
+  const paymentMethod = (PAYMENT_METHODS as readonly string[]).includes(String(r.paymentMethod))
+    ? (r.paymentMethod as PaymentMethod)
+    : "tunai";
   const note = {
     id: String(r.id ?? uid()),
     number: String(r.number ?? ""),
@@ -182,6 +196,8 @@ function migrateNote(raw: unknown): Note | null {
     customerPhone: String(r.customerPhone ?? "").trim(),
     items,
     discount,
+    paymentMethod,
+    cashReceived: Math.max(0, Math.round(Number(r.cashReceived ?? 0))) || 0,
     tags: Array.isArray(r.tags) ? (r.tags as unknown[]).map(String).map((s) => s.trim()).filter(Boolean) : [],
     note: String(r.note ?? r.notes ?? "").trim(),
     createdAt: String(r.createdAt ?? r.date ?? now),
@@ -502,6 +518,97 @@ export function dailyBuckets(notes: Note[], days: number): { date: string; omset
   for (const n of notes) {
     const k = n.date.slice(0, 10);
     const i = idx.get(k);
+    if (i == null) continue;
+    buckets[i].omset += calcNoteTotals(n).total;
+  }
+  return buckets;
+}
+
+// ===== Monthly reporting (Laporan) =====
+// month is 0-based (0 = Januari), matching Date.getMonth().
+export function inCalendarMonth(iso: string, year: number, month: number): boolean {
+  const d = new Date(iso);
+  return d.getFullYear() === year && d.getMonth() === month;
+}
+
+export type MonthlyRecap = {
+  omset: number;
+  modal: number;
+  labaKotor: number;
+  pengeluaran: number;
+  labaBersih: number;
+  count: number;
+  avgPerNota: number;
+  byMethod: Record<PaymentMethod, { count: number; omset: number }>;
+  topItems: { name: string; qty: number; omset: number }[];
+  topCustomers: { name: string; total: number; count: number }[];
+};
+
+export function monthlyRecap(notes: Note[], expenses: Expense[], year: number, month: number): MonthlyRecap {
+  const monthNotes = notes.filter((n) => inCalendarMonth(n.date, year, month));
+  const byMethod: Record<PaymentMethod, { count: number; omset: number }> = {
+    tunai: { count: 0, omset: 0 },
+    transfer: { count: 0, omset: 0 },
+    qris: { count: 0, omset: 0 },
+  };
+  const itemMap = new Map<string, { name: string; qty: number; omset: number }>();
+  let omset = 0, modal = 0;
+  for (const n of monthNotes) {
+    const t = calcNoteTotals(n);
+    omset += t.total;
+    modal += t.modal;
+    const m = byMethod[n.paymentMethod] ?? byMethod.tunai;
+    m.count += 1;
+    m.omset += t.total;
+    for (const it of n.items) {
+      const key = it.name.trim().toLowerCase();
+      if (!key) continue;
+      const cur = itemMap.get(key);
+      const lineOmset = it.qty * it.price;
+      if (!cur) itemMap.set(key, { name: it.name.trim(), qty: it.qty, omset: lineOmset });
+      else { cur.qty += it.qty; cur.omset += lineOmset; }
+    }
+  }
+  const pengeluaran = expenses
+    .filter((e) => inCalendarMonth(e.date, year, month))
+    .reduce((s, e) => s + e.amount, 0);
+  const labaKotor = omset - modal;
+  const count = monthNotes.length;
+  const topItems = [...itemMap.values()].sort((a, b) => b.omset - a.omset).slice(0, 5);
+  const topCustomers = deriveCustomers(monthNotes)
+    .map((c) => ({ name: c.name, total: c.totalBelanja, count: c.count }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 3);
+  return {
+    omset,
+    modal,
+    labaKotor,
+    pengeluaran,
+    labaBersih: labaKotor - pengeluaran,
+    count,
+    avgPerNota: count ? Math.round(omset / count) : 0,
+    byMethod,
+    topItems,
+    topCustomers,
+  };
+}
+
+// Omset per bulan untuk N bulan terakhir (termasuk bulan ini).
+// date dipakai sebagai kunci/label: "YYYY-MM-01".
+export function monthlyBuckets(notes: Note[], months: number): { date: string; omset: number }[] {
+  const today = new Date();
+  const buckets: { date: string; omset: number }[] = [];
+  const idx = new Map<string, number>();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    idx.set(key, buckets.length);
+    buckets.push({ date: `${key}-01`, omset: 0 });
+  }
+  for (const n of notes) {
+    const d = new Date(n.date);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const i = idx.get(key);
     if (i == null) continue;
     buckets[i].omset += calcNoteTotals(n).total;
   }

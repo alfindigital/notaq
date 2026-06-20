@@ -13,6 +13,7 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as RiwayatRouteImport } from './routes/riwayat'
 import { Route as PengeluaranRouteImport } from './routes/pengeluaran'
 import { Route as PengaturanRouteImport } from './routes/pengaturan'
+import { Route as LaporanRouteImport } from './routes/laporan'
 import { Route as BuatRouteImport } from './routes/buat'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RiwayatNoteIdRouteImport } from './routes/riwayat.$noteId'
@@ -37,6 +38,11 @@ const PengaturanRoute = PengaturanRouteImport.update({
   path: '/pengaturan',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LaporanRoute = LaporanRouteImport.update({
+  id: '/laporan',
+  path: '/laporan',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BuatRoute = BuatRouteImport.update({
   id: '/buat',
   path: '/buat',
@@ -56,6 +62,7 @@ const RiwayatNoteIdRoute = RiwayatNoteIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/buat': typeof BuatRoute
+  '/laporan': typeof LaporanRoute
   '/pengaturan': typeof PengaturanRoute
   '/pengeluaran': typeof PengeluaranRoute
   '/riwayat': typeof RiwayatRouteWithChildren
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/buat': typeof BuatRoute
+  '/laporan': typeof LaporanRoute
   '/pengaturan': typeof PengaturanRoute
   '/pengeluaran': typeof PengeluaranRoute
   '/riwayat': typeof RiwayatRouteWithChildren
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/buat': typeof BuatRoute
+  '/laporan': typeof LaporanRoute
   '/pengaturan': typeof PengaturanRoute
   '/pengeluaran': typeof PengeluaranRoute
   '/riwayat': typeof RiwayatRouteWithChildren
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/buat'
+    | '/laporan'
     | '/pengaturan'
     | '/pengeluaran'
     | '/riwayat'
@@ -95,6 +105,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/buat'
+    | '/laporan'
     | '/pengaturan'
     | '/pengeluaran'
     | '/riwayat'
@@ -104,6 +115,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/buat'
+    | '/laporan'
     | '/pengaturan'
     | '/pengeluaran'
     | '/riwayat'
@@ -114,6 +126,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BuatRoute: typeof BuatRoute
+  LaporanRoute: typeof LaporanRoute
   PengaturanRoute: typeof PengaturanRoute
   PengeluaranRoute: typeof PengeluaranRoute
   RiwayatRoute: typeof RiwayatRouteWithChildren
@@ -148,6 +161,13 @@ declare module '@tanstack/react-router' {
       path: '/pengaturan'
       fullPath: '/pengaturan'
       preLoaderRoute: typeof PengaturanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/laporan': {
+      id: '/laporan'
+      path: '/laporan'
+      fullPath: '/laporan'
+      preLoaderRoute: typeof LaporanRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/buat': {
@@ -188,6 +208,7 @@ const RiwayatRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BuatRoute: BuatRoute,
+  LaporanRoute: LaporanRoute,
   PengaturanRoute: PengaturanRoute,
   PengeluaranRoute: PengeluaranRoute,
   RiwayatRoute: RiwayatRouteWithChildren,

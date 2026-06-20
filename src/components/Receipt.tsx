@@ -1,6 +1,6 @@
 import { forwardRef } from "react";
 import type { Business, Note } from "@/lib/storage";
-import { calcNoteTotals } from "@/lib/storage";
+import { calcNoteTotals, PAYMENT_LABELS } from "@/lib/storage";
 import { formatIDR, formatDateTime } from "@/lib/format";
 
 interface Props { note: Note; business: Business }
@@ -45,6 +45,14 @@ export const Receipt = forwardRef<HTMLDivElement, Props>(function Receipt({ note
       <Row left="Subtotal" right={formatIDR(totals.subtotal)} />
       {note.discount > 0 ? <Row left="Diskon" right={"- " + formatIDR(note.discount)} /> : null}
       <Row left={<strong>TOTAL</strong>} right={<strong>{formatIDR(totals.total)}</strong>} bold />
+      <Divider />
+      <Row left="Bayar" right={PAYMENT_LABELS[note.paymentMethod]} />
+      {note.paymentMethod === "tunai" && note.cashReceived > 0 ? (
+        <>
+          <Row left="Tunai" right={formatIDR(note.cashReceived)} />
+          <Row left="Kembali" right={formatIDR(Math.max(0, note.cashReceived - totals.total))} />
+        </>
+      ) : null}
       <Divider />
       {note.note ? (
         <div style={{ marginTop: 4, fontStyle: "italic" }}>Catatan: {note.note}</div>

@@ -5,7 +5,7 @@ import { ArrowLeft, Trash2, MessageCircle, Image as ImageIcon, Copy, Pencil, Cop
 import { toast } from "sonner";
 
 
-import { db, calcNoteTotals } from "@/lib/storage";
+import { db, calcNoteTotals, PAYMENT_LABELS } from "@/lib/storage";
 import { formatIDR, formatDateTime } from "@/lib/format";
 import { buildReceiptText, renderReceiptPNG, sharePNG, waLink } from "@/lib/receipt";
 import { tapHaptic } from "@/lib/haptic";
@@ -157,6 +157,14 @@ function NoteDetail() {
               <span className="text-muted-foreground">Total</span>
               <RollingIDR value={totals.total} className="font-display font-semibold text-2xl tracking-tight" />
             </div>
+            <div className="h-px bg-border my-1" />
+            <Row label="Metode" value={PAYMENT_LABELS[note.paymentMethod]} muted />
+            {note.paymentMethod === "tunai" && note.cashReceived > 0 && (
+              <>
+                <Row label="Tunai" value={formatIDR(note.cashReceived)} muted />
+                <Row label="Kembali" value={formatIDR(Math.max(0, note.cashReceived - totals.total))} muted />
+              </>
+            )}
           </section>
         );
       })()}
