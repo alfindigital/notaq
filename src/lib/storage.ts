@@ -15,12 +15,13 @@ function getStore() {
   return store;
 }
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const KEYS = {
   business: "business",
   presets: "presets",
   notes: "notes",
+  expenses: "expenses",
   seq: "seq",
   prefs: "prefs",
   schemaVersion: "schemaVersion",
@@ -93,6 +94,24 @@ export const NoteSchema = z.object({
 });
 export type Note = z.infer<typeof NoteSchema>;
 
+// Default expense categories (fixed for v1; not user-editable yet).
+export const EXPENSE_CATEGORIES = [
+  "Stok/Bahan", "Sewa", "Listrik & Air", "Gaji", "Transport", "Operasional", "Lainnya",
+] as const;
+
+export const ExpenseSchema = z.object({
+  id: z.string(),
+  date: z.string(),
+  // Kept as a free string (not enum) so future user-editable categories / cloud
+  // migration don't break on unknown values.
+  category: z.string().trim().min(1).max(40).default("Lainnya"),
+  amount: z.number().int().min(0).max(1_000_000_000),
+  note: z.string().trim().max(200).default(""),
+  createdAt: z.string().default(() => new Date().toISOString()),
+  updatedAt: z.string().default(() => new Date().toISOString()),
+});
+export type Expense = z.infer<typeof ExpenseSchema>;
+
 export const PrefsSchema = z.object({
   hideAmounts: z.boolean().default(false),
 });
@@ -106,6 +125,7 @@ export const BackupSchema = z.object({
     business: BusinessSchema,
     presets: z.array(PresetSchema),
     notes: z.array(NoteSchema),
+    expenses: z.array(ExpenseSchema),
     seq: z.number(),
     prefs: PrefsSchema,
   }),
@@ -184,6 +204,26 @@ function migratePreset(raw: unknown): Preset | null {
       price: Math.round(Number(r.price ?? 0)),
       cost: Math.round(Number(r.cost ?? 0)),
       unit: String(r.unit ?? "").trim(),
+    });
+  } catch {
+    return null;
+  }
+}
+
+function migrateExpense(raw: unknown): Expense | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Loose;
+  try {
+    const now = new Date().toISOString();
+    return ExpenseSchema.parse({
+      id: String(r.id ?? uid()),
+      date: String(r.date ?? now),
+      category: String(r.category ?? "Lainnya").trim() || "Lainnya",
+      amount: Math.round(Number(r.amount ?? 0)),
+      // accept legacy `description` as an alias for `note`
+      note: String(r.note ?? r.description ?? "").trim(),
+      createdAt: String(r.createdAt ?? r.date ?? now),
+      updatedAt: String(r.updatedAt ?? r.date ?? now),
     });
   } catch {
     return null;
@@ -269,6 +309,13 @@ export const db = {
   async setNotes(notes: Note[]) {
     await kvSet(KEYS.notes, z.array(NoteSchema).parse(notes));
   },
+  async getExpenses(): Promise<Expense[]> {
+    const raw = await kvGet<unknown[]>(KEYS.expenses, []);
+    return (raw ?? []).map(migrateExpense).filter((x): x is Expense => !!x);
+  },
+  async setExpenses(expenses: Expense[]) {
+    await kvSet(KEYS.expenses, z.array(ExpenseSchema).parse(expenses));
+  },
   async getSeq(): Promise<number> {
     return await kvGet<number>(KEYS.seq, 0);
   },
@@ -283,10 +330,11 @@ export const db = {
     await kvSet(KEYS.prefs, PrefsSchema.parse(p));
   },
   async exportAll(): Promise<Backup> {
-    const [business, presets, notes, seq, prefs] = await Promise.all([
+    const [business, presets, notes, expenses, seq, prefs] = await Promise.all([
       this.getBusiness(),
       this.getPresets(),
       this.getNotes(),
+      this.getExpenses(),
       this.getSeq(),
       this.getPrefs(),
     ]);
@@ -294,7 +342,7 @@ export const db = {
       app: "notaku",
       version: SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
-      data: { business, presets, notes, seq, prefs },
+      data: { business, presets, notes, expenses, seq, prefs },
     };
   },
   async importAll(data: unknown, mode: "merge" | "replace" = "replace") {
@@ -313,6 +361,7 @@ export const db = {
         business: migrateBusiness(r.business),
         presets: Array.isArray(r.presets) ? (r.presets as unknown[]).map(migratePreset).filter((x): x is Preset => !!x) : [],
         notes: Array.isArray(r.notes) ? (r.notes as unknown[]).map(migrateNote).filter((x): x is Note => !!x) : [],
+        expenses: Array.isArray(r.expenses) ? (r.expenses as unknown[]).map(migrateExpense).filter((x): x is Expense => !!x) : [],
         seq: typeof r.seq === "number" ? r.seq : 0,
         prefs: (() => { try { return PrefsSchema.parse(r.prefs); } catch { return defaultPrefs; } })(),
       };
@@ -321,6 +370,7 @@ export const db = {
       await this.setBusiness(parsed.business);
       await this.setPresets(parsed.presets);
       await this.setNotes(parsed.notes);
+      await this.setExpenses(parsed.expenses);
       await this.setSeq(parsed.seq);
       await this.setPrefs(parsed.prefs);
     } else {
@@ -332,6 +382,9 @@ export const db = {
       const curN = await this.getNotes();
       const nIds = new Set(curN.map((x) => x.id));
       await this.setNotes([...curN, ...parsed.notes.filter((n) => !nIds.has(n.id))]);
+      const curE = await this.getExpenses();
+      const eIds = new Set(curE.map((x) => x.id));
+      await this.setExpenses([...curE, ...parsed.expenses.filter((e) => !eIds.has(e.id))]);
       const curS = await this.getSeq();
       await this.setSeq(Math.max(curS, parsed.seq));
     }
@@ -341,6 +394,7 @@ export const db = {
       kvSet(KEYS.business, defaultBusiness),
       kvSet(KEYS.presets, []),
       kvSet(KEYS.notes, []),
+      kvSet(KEYS.expenses, []),
       kvSet(KEYS.seq, 0),
       kvSet(KEYS.prefs, defaultPrefs),
     ]);
@@ -423,6 +477,16 @@ export function aggregate(notes: Note[], range: PeriodRange): { omset: number; l
     omset += t.total; laba += t.laba; count += 1;
   }
   return { omset, laba, count };
+}
+
+export function sumExpenses(expenses: Expense[], range: PeriodRange): number {
+  const start = periodStart(range);
+  let total = 0;
+  for (const e of expenses) {
+    if (new Date(e.date).getTime() < start) continue;
+    total += e.amount;
+  }
+  return total;
 }
 
 export function dailyBuckets(notes: Note[], days: number): { date: string; omset: number }[] {

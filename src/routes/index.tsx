@@ -1,12 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState, lazy, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FilePlus2 } from "lucide-react";
+import { ChevronRight, FilePlus2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 
 const OmsetChart = lazy(() => import("@/components/OmsetChart"));
 
-import { db, aggregate, dailyBuckets, calcNoteTotals, hasMissingCost } from "@/lib/storage";
+import { db, aggregate, dailyBuckets, calcNoteTotals, hasMissingCost, sumExpenses } from "@/lib/storage";
 import { formatIDR, formatDateID } from "@/lib/format";
 import { SkelHero, SkelListItem, Skel } from "@/components/Skeleton";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -69,8 +69,11 @@ function Beranda() {
   const notes = notesQ.data ?? [];
   useQuery({ queryKey: ["business"], queryFn: () => db.getBusiness() });
   const { data: prefs } = useQuery({ queryKey: ["prefs"], queryFn: () => db.getPrefs() });
+  const { data: expenses = [] } = useQuery({ queryKey: ["expenses"], queryFn: () => db.getExpenses() });
   const [range, setRange] = useState<"today" | "month">("today");
   const stats = useMemo(() => aggregate(notes, range), [notes, range]);
+  const pengeluaran = useMemo(() => sumExpenses(expenses, range), [expenses, range]);
+  const labaBersih = stats.laba - pengeluaran;
   const buckets = useMemo(() => dailyBuckets(notes, 7), [notes]);
   const recent = useMemo(() => [...notes].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 5), [notes]);
   const missingCost = useMemo(() => hasMissingCost(notes), [notes]);
@@ -117,10 +120,25 @@ function Beranda() {
         ) : (
           <>
             <HeroCard label="Omset" amount={stats.omset} sub={`${stats.count} nota`} hide={hide} />
-            <HeroCard label="Laba" amount={stats.laba} sub={missingCost ? "Sebagian item belum bermodal" : "Laba kotor"} hide={hide} tone="accent" />
+            <HeroCard label="Laba Bersih" amount={labaBersih} sub={missingCost ? "Sebagian item belum bermodal" : "Setelah pengeluaran"} hide={hide} tone="accent" />
           </>
         )}
       </div>
+
+      {!loading && (
+        <Link
+          to="/pengeluaran"
+          className="tap flex items-center justify-between gap-2 rounded-2xl bg-card border border-border shadow-soft px-4 py-2.5"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Wallet className="h-4 w-4 text-muted-foreground shrink-0" />
+            <span className="t-caption truncate">
+              Laba kotor {hide ? "•••" : formatIDR(stats.laba)} − Pengeluaran {hide ? "•••" : formatIDR(pengeluaran)}
+            </span>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+        </Link>
+      )}
 
       {loading ? (
         <section className="rounded-2xl bg-card border border-border shadow-soft p-3 space-y-2">
