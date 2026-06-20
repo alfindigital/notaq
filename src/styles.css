@@ -144,9 +144,11 @@ button:disabled,
   cursor: not-allowed;
 }
 
-/* ---- No focus ring on any element ---- */
-:focus { outline: none; }
-:focus-visible { outline: none; box-shadow: none; }
+/* ---- Focus: clean for mouse/touch, visible for keyboard (a11y) ---- */
+/* Mouse/touch focus stays ring-free for a calm mobile UI… */
+:focus:not(:focus-visible) { outline: none; }
+/* …but keyboard navigation gets a clear, brand-colored focus ring. */
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 2px; }
 
 
 
