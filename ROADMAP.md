@@ -10,6 +10,9 @@ Status data saat ini: **100% lokal** di HP (IndexedDB), tanpa login.
 Rencana akhir: **sync ke Supabase / Lovable Cloud** setelah fitur & UI matang
 (lihat [Fase 5](#fase-5--cloud-sync--multi-perangkat-ditunda)).
 
+> Lihat juga **`AUDIT.md`** — audit codebase menyeluruh. Risiko teknis dari audit
+> (eviction data iOS, skalabilitas penyimpanan) sudah dimasukkan ke Fase 5 di bawah.
+
 ---
 
 ## 0. Prinsip & Pagar Pembatas (biar tetap "simple")
@@ -175,6 +178,10 @@ Dieksekusi **setelah** fitur & UI matang. Tujuan: anti data hilang + multi-peran
   agar mudah dipetakan ke tabel SQL.
 - Pertahankan **id stabil** (`uid()`) per record → memudahkan merge & sync.
 - `exportAll`/`importAll` yang sudah ada = jalur migrasi awal ke cloud yang mulus.
+- **Skema per-baris, bukan blob** (temuan audit): saat ini semua nota disimpan
+  sebagai 1 key array di IndexedDB → tiap simpan menulis ulang seluruh array.
+  Di cloud, gunakan **1 row per nota / per item / per pengeluaran** agar hemat &
+  skalabel di volume besar.
 
 **Saat eksekusi:**
 - Tabel: `business`, `presets`, `notes`, `note_items`, `expenses`, `prefs`
@@ -184,8 +191,13 @@ Dieksekusi **setelah** fitur & UI matang. Tujuan: anti data hilang + multi-peran
   (jangan jadikan online sebagai syarat memakai app).
 - **Migrasi**: schema versioning yang sudah ada dipakai untuk transisi lokal → cloud.
 
-> Catatan risiko sementara (sebelum cloud): data hanya di 1 perangkat. Untuk jaga-jaga,
-> dorong user export berkala lewat copy di Pengaturan (tanpa fitur baru).
+> **Catatan risiko sementara (sebelum cloud) — dari audit:** data hanya di 1
+> perangkat. Lebih dari sekadar "HP hilang": **Safari iOS menghapus IndexedDB
+> setelah 7 hari** situs tak dibuka **bila belum di-"Add to Home Screen"**.
+> Mitigasi interim tanpa cloud:
+> 1. **Dorong "Tambah ke Layar Utama"** — PWA terinstal kebal eviction (bisa jadi
+>    bagian dari onboarding Fase 0).
+> 2. **Pengingat backup berkala** (mis. tiap X hari / X nota) lewat export yang sudah ada.
 
 ---
 

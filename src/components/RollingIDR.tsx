@@ -54,6 +54,7 @@ export function RollingIDR({
     prevTrigger.current = trigger;
   }, [trigger]);
 
+  const negative = Math.round(value) < 0;
   const chars = useMemo(() => {
     const abs = Math.abs(Math.round(value));
     const formatted = abs.toLocaleString("id-ID"); // "2.222"
@@ -64,6 +65,7 @@ export function RollingIDR({
 
   return (
     <span key={key} className={`inline-flex items-baseline font-mono ${className}`}>
+      {negative && <span className="mr-[0.05em]">-</span>}
       <span className="mr-[0.15em]">Rp</span>
       {chars.map((ch, i) => (
         <DigitReel key={`${i}-${ch}`} target={ch} delay={i * stagger + 80} />

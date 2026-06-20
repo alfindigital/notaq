@@ -8,6 +8,12 @@ export function usePullToRefresh(onRefresh: () => Promise<unknown> | unknown) {
   const [refreshing, setRefreshing] = useState(false);
   const startY = useRef<number | null>(null);
   const active = useRef(false);
+  // Mirror state into refs so the mount-only touch handlers below always read
+  // fresh values without re-subscribing (avoids stale closures).
+  const pullRef = useRef(0);
+  const refreshingRef = useRef(false);
+  useEffect(() => { pullRef.current = pull; }, [pull]);
+  useEffect(() => { refreshingRef.current = refreshing; }, [refreshing]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -62,12 +68,6 @@ export function usePullToRefresh(onRefresh: () => Promise<unknown> | unknown) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Keep refs in sync to avoid stale closures
-  const pullRef = useRef(0);
-  const refreshingRef = useRef(false);
-  useEffect(() => { pullRef.current = pull; }, [pull]);
-  useEffect(() => { refreshingRef.current = refreshing; }, [refreshing]);
 
   const progress = Math.min(1, pull / THRESHOLD);
   return { pull, refreshing, progress };
