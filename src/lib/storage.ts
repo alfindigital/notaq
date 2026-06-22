@@ -15,7 +15,7 @@ function getStore() {
   return store;
 }
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const KEYS = {
   business: "business",
@@ -59,6 +59,12 @@ export const BusinessSchema = z.object({
   logo: z.string().max(500_000).default(""),
   receiptFooter: z.string().trim().max(120).default("Terima kasih sudah belanja"),
   lastWaNumber: z.string().trim().max(20).default(""),
+  // Rekening untuk pembayaran transfer (ditampilkan di struk & WA).
+  bankName: z.string().trim().max(40).default(""),
+  bankAccount: z.string().trim().max(40).default(""),
+  bankHolder: z.string().trim().max(60).default(""),
+  // Gambar QRIS statis (base64) — ditampilkan di struk saat metode QRIS.
+  qrisImage: z.string().max(500_000).default(""),
 });
 export type Business = z.infer<typeof BusinessSchema>;
 
@@ -71,11 +77,17 @@ export const PresetSchema = z.object({
 });
 export type Preset = z.infer<typeof PresetSchema>;
 
+export const DISCOUNT_TYPES = ["amount", "percent"] as const;
+export type DiscountType = (typeof DISCOUNT_TYPES)[number];
+
 export const NoteItemSchema = z.object({
   name: z.string().trim().min(1).max(60),
   qty: z.number().min(0.001).max(99_999),
   price: z.number().int().min(0).max(1_000_000_000),
   cost: z.number().int().min(0).max(1_000_000_000).default(0),
+  // Diskon per item (opsional). amount = Rp, percent = % dari (qty*price).
+  discountType: z.enum(DISCOUNT_TYPES).default("amount"),
+  discountValue: z.number().min(0).max(1_000_000_000).default(0),
 });
 export type NoteItem = z.infer<typeof NoteItemSchema>;
 
@@ -88,6 +100,19 @@ export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   qris: "QRIS",
 };
 
+// Status pembayaran nota.
+export const NOTE_STATUSES = ["lunas", "belum", "batal"] as const;
+export type NoteStatus = (typeof NOTE_STATUSES)[number];
+export const STATUS_LABELS: Record<NoteStatus, string> = {
+  lunas: "Lunas",
+  belum: "Belum bayar",
+  batal: "Batal",
+};
+
+// Jenis pajak. ppn11 = PPN 11%, custom = tarif manual, none = tanpa pajak.
+export const TAX_TYPES = ["none", "ppn11", "custom"] as const;
+export type TaxType = (typeof TAX_TYPES)[number];
+
 export const NoteSchema = z.object({
   id: z.string(),
   number: z.string(),
@@ -95,9 +120,17 @@ export const NoteSchema = z.object({
   customerName: z.string().trim().max(60).default(""),
   customerPhone: z.string().trim().max(20).default(""),
   items: z.array(NoteItemSchema).min(1).max(100),
-  discount: z.number().int().min(0).max(1_000_000_000).default(0),
+  discount: z.number().int().min(0).max(1_000_000_000).default(0), // diskon tambahan level-nota (Rp)
+  // Pajak & biaya (opsional).
+  taxType: z.enum(TAX_TYPES).default("none"),
+  customTaxRate: z.number().min(0).max(100).default(0),
+  shippingCost: z.number().int().min(0).max(1_000_000_000).default(0),
   paymentMethod: z.enum(PAYMENT_METHODS).default("tunai"),
   cashReceived: z.number().int().min(0).max(1_000_000_000).default(0), // uang tunai diterima; 0 = tak dicatat
+  // Status pembayaran & piutang.
+  status: z.enum(NOTE_STATUSES).default("lunas"),
+  dueDate: z.string().default(""), // YYYY-MM-DD; jatuh tempo piutang
+  paidDate: z.string().default(""), // ISO; saat ditandai lunas
   tags: z.array(z.string().trim().min(1).max(20)).default([]),
   note: z.string().trim().max(200).default(""),
   createdAt: z.string().default(() => new Date().toISOString()),
@@ -181,6 +214,8 @@ function migrateNote(raw: unknown): Note | null {
         qty: Number(it.qty ?? 1),
         price: Math.round(Number(it.price ?? 0)),
         cost: Math.round(Number(it.cost ?? 0)),
+        discountType: (DISCOUNT_TYPES as readonly string[]).includes(String(it.discountType)) ? (it.discountType as DiscountType) : "amount",
+        discountValue: Math.max(0, Number(it.discountValue ?? 0)) || 0,
       })).filter((it) => it.name && it.qty > 0)
     : [];
   if (!items.length) return null;
@@ -196,8 +231,14 @@ function migrateNote(raw: unknown): Note | null {
     customerPhone: String(r.customerPhone ?? "").trim(),
     items,
     discount,
+    taxType: (TAX_TYPES as readonly string[]).includes(String(r.taxType)) ? (r.taxType as TaxType) : "none",
+    customTaxRate: Math.max(0, Math.min(100, Number(r.customTaxRate ?? 0))) || 0,
+    shippingCost: Math.max(0, Math.round(Number(r.shippingCost ?? 0))) || 0,
     paymentMethod,
     cashReceived: Math.max(0, Math.round(Number(r.cashReceived ?? 0))) || 0,
+    status: (NOTE_STATUSES as readonly string[]).includes(String(r.status)) ? (r.status as NoteStatus) : "lunas",
+    dueDate: String(r.dueDate ?? ""),
+    paidDate: String(r.paidDate ?? ""),
     tags: Array.isArray(r.tags) ? (r.tags as unknown[]).map(String).map((s) => s.trim()).filter(Boolean) : [],
     note: String(r.note ?? r.notes ?? "").trim(),
     createdAt: String(r.createdAt ?? r.date ?? now),
@@ -427,17 +468,64 @@ export function generateNoteNumber(prefix: string, seq: number, date = new Date(
 }
 
 // ===== Derived =====
-export type NoteTotals = { subtotal: number; total: number; modal: number; laba: number };
-export function calcNoteTotals(note: Pick<Note, "items" | "discount">): NoteTotals {
-  const subtotal = note.items.reduce((s, it) => s + it.qty * it.price, 0);
+// Subtotal satu baris item setelah diskon per-item.
+export function calcLineSubtotal(item: Pick<NoteItem, "qty" | "price" | "discountType" | "discountValue">): number {
+  const gross = item.qty * item.price;
+  const dv = item.discountValue || 0;
+  if (dv <= 0) return gross;
+  if (item.discountType === "percent") return Math.max(0, Math.round(gross * (1 - Math.min(dv, 100) / 100)));
+  return Math.max(0, gross - dv);
+}
+
+export type NoteTotals = {
+  subtotal: number; total: number; modal: number; laba: number;
+  // Rincian lanjutan (0 untuk nota sederhana).
+  itemDiscount: number; noteDiscount: number; afterDiscount: number;
+  taxRate: number; taxAmount: number; shipping: number;
+};
+export function calcNoteTotals(
+  note: Pick<Note, "items" | "discount"> & Partial<Pick<Note, "taxType" | "customTaxRate" | "shippingCost">>,
+): NoteTotals {
+  const gross = note.items.reduce((s, it) => s + it.qty * it.price, 0);
+  const subtotal = note.items.reduce((s, it) => s + calcLineSubtotal(it), 0);
+  const itemDiscount = gross - subtotal;
   const modal = note.items.reduce((s, it) => s + it.qty * (it.cost || 0), 0);
-  const total = Math.max(0, subtotal - (note.discount || 0));
-  const laba = total - modal;
-  return { subtotal, total, modal, laba };
+  const noteDiscount = Math.min(note.discount || 0, subtotal);
+  const afterDiscount = Math.max(0, subtotal - noteDiscount);
+  const taxRate = note.taxType === "ppn11" ? 11 : note.taxType === "custom" ? (note.customTaxRate || 0) : 0;
+  const taxAmount = Math.round(afterDiscount * (taxRate / 100));
+  const shipping = note.shippingCost || 0;
+  const total = afterDiscount + taxAmount + shipping;
+  // Pajak = titipan negara, ongkir = pass-through → keduanya tidak dihitung sebagai laba.
+  const laba = afterDiscount - modal;
+  return { subtotal, total, modal, laba, itemDiscount, noteDiscount, afterDiscount, taxRate, taxAmount, shipping };
 }
 
 export function hasMissingCost(notes: Note[]): boolean {
   return notes.some((n) => n.items.some((it) => !it.cost));
+}
+
+// ===== Status / piutang =====
+function todayYMD(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+export function isOverdue(note: Pick<Note, "status" | "dueDate">): boolean {
+  return note.status === "belum" && !!note.dueDate && note.dueDate < todayYMD();
+}
+// Token warna untuk badge status (kelas Tailwind).
+export function statusTone(note: Pick<Note, "status" | "dueDate">): string {
+  if (note.status === "lunas") return "bg-accent text-accent-foreground";
+  if (note.status === "batal") return "bg-muted text-muted-foreground line-through";
+  return isOverdue(note)
+    ? "bg-destructive/15 text-destructive"
+    : "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+}
+// Total piutang berjalan (nota belum dibayar).
+export function sumOutstanding(notes: Note[]): number {
+  let total = 0;
+  for (const n of notes) if (n.status === "belum") total += calcNoteTotals(n).total;
+  return total;
 }
 
 export function deriveCustomers(notes: Note[]): { name: string; phone: string; key: string; totalBelanja: number; count: number; lastDate: string }[] {

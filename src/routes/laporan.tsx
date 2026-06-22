@@ -1,12 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Package, Users, Wallet } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Package, Users, Wallet, FileSpreadsheet, FileText } from "lucide-react";
+import { toast } from "sonner";
 
 const OmsetChart = lazy(() => import("@/components/OmsetChart"));
 
-import { db, monthlyRecap, monthlyBuckets, PAYMENT_METHODS, PAYMENT_LABELS } from "@/lib/storage";
+import { db, monthlyRecap, monthlyBuckets, inCalendarMonth, PAYMENT_METHODS, PAYMENT_LABELS, type Note } from "@/lib/storage";
+import { exportNotesCSV, exportNotesPDF } from "@/lib/exportReport";
 import { formatIDR } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { SkelHero } from "@/components/Skeleton";
 import { SITE_URL } from "@/lib/site";
 
@@ -42,6 +45,7 @@ function LaporanPage() {
   const notesQ = useQuery({ queryKey: ["notes"], queryFn: () => db.getNotes() });
   const notes = notesQ.data ?? [];
   const { data: expenses = [] } = useQuery({ queryKey: ["expenses"], queryFn: () => db.getExpenses() });
+  const { data: business } = useQuery({ queryKey: ["business"], queryFn: () => db.getBusiness() });
   const { data: prefs } = useQuery({ queryKey: ["prefs"], queryFn: () => db.getPrefs() });
   const hide = !!prefs?.hideAmounts;
   const loading = notesQ.isPending;
@@ -198,9 +202,86 @@ function LaporanPage() {
               </div>
             </section>
           )}
+
+          {/* Ekspor */}
+          {notes.length > 0 && (
+            <ExportCard notes={notes} cursor={cursor} businessName={business?.name} />
+          )}
         </>
       )}
     </div>
+  );
+}
+
+type Scope = "month" | "year" | "all";
+function ExportCard({ notes, cursor, businessName }: { notes: Note[]; cursor: { year: number; month: number }; businessName?: string }) {
+  const [scope, setScope] = useState<Scope>("month");
+  const [busy, setBusy] = useState(false);
+
+  const scoped = useMemo(() => {
+    if (scope === "all") return notes;
+    if (scope === "year") return notes.filter((n) => new Date(n.date).getFullYear() === cursor.year);
+    return notes.filter((n) => inCalendarMonth(n.date, cursor.year, cursor.month));
+  }, [notes, scope, cursor]);
+
+  const monthLabel = new Date(cursor.year, cursor.month, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+  const scopeLabel: Record<Scope, string> = { month: monthLabel, year: `Tahun ${cursor.year}`, all: "Semua data" };
+  const slug = scope === "month" ? `${cursor.year}-${String(cursor.month + 1).padStart(2, "0")}` : scope === "year" ? String(cursor.year) : "semua";
+
+  function doCSV() {
+    if (!scoped.length) return;
+    try { exportNotesCSV(scoped, `laporan-${slug}.csv`); }
+    catch (e) { toast.error("Gagal membuat CSV."); if (import.meta.env.DEV) console.error(e); }
+  }
+  async function doPDF() {
+    if (!scoped.length) return;
+    setBusy(true);
+    try { await exportNotesPDF(scoped, businessName, `laporan-${slug}.pdf`); }
+    catch (e) { toast.error("Gagal membuat PDF."); if (import.meta.env.DEV) console.error(e); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <section className="rounded-2xl bg-card border border-border shadow-soft p-4 space-y-3">
+      <div>
+        <h2 className="t-eyebrow">Ekspor laporan</h2>
+        <p className="t-caption mt-0.5">Unduh data nota untuk pembukuan atau arsip.</p>
+      </div>
+      <div className="flex rounded-full bg-surface p-0.5 text-sm">
+        {(["month", "year", "all"] as Scope[]).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setScope(s)}
+            className={cn(
+              "flex-1 h-9 rounded-full font-medium capitalize transition-colors",
+              scope === s ? "bg-primary text-primary-foreground shadow-soft" : "text-muted-foreground",
+            )}
+          >
+            {s === "month" ? "Bulan ini" : s === "year" ? "Tahun ini" : "Semua"}
+          </button>
+        ))}
+      </div>
+      <p className="t-caption">{scopeLabel[scope]} · {scoped.length} nota</p>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={doCSV}
+          disabled={!scoped.length}
+          className="tap inline-flex items-center justify-center gap-1.5 rounded-full bg-card border border-border h-11 text-sm font-medium disabled:opacity-50"
+        >
+          <FileSpreadsheet className="h-4 w-4" /> CSV
+        </button>
+        <button
+          type="button"
+          onClick={doPDF}
+          disabled={!scoped.length || busy}
+          className="tap inline-flex items-center justify-center gap-1.5 rounded-full bg-primary text-primary-foreground h-11 text-sm font-medium disabled:opacity-50"
+        >
+          <FileText className="h-4 w-4" /> {busy ? "Membuat…" : "PDF"}
+        </button>
+      </div>
+    </section>
   );
 }
 

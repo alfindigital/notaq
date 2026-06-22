@@ -4,8 +4,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, FileText, ChevronRight, Plus, Tag, Calendar, X, ArrowUpDown, Trash2, Check } from "lucide-react";
 import { toast } from "sonner";
 
-import { db, calcNoteTotals, deriveTags, type Note } from "@/lib/storage";
+import { db, calcNoteTotals, deriveTags, STATUS_LABELS, statusTone, type Note, type NoteStatus } from "@/lib/storage";
 import { formatIDR, formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ const CalendarPicker = lazy(() => import("@/components/ui/calendar").then((m) =>
 
 type Period = "all" | "day" | "month" | "custom";
 type SortKey = "newest" | "oldest" | "amount";
+type StatusFilter = NoteStatus | "all";
 const PERIODS: { id: Exclude<Period, "custom">; label: string }[] = [
   { id: "all", label: "Semua" }, { id: "day", label: "Hari ini" }, { id: "month", label: "Bulan" },
 ];
@@ -26,6 +28,11 @@ const SORTS: { id: SortKey; label: string }[] = [
 ];
 
 export const Route = createFileRoute("/riwayat")({
+  // Mendukung deep-link dari dashboard, mis. /riwayat?status=belum
+  validateSearch: (search: Record<string, unknown>): { status?: StatusFilter } => {
+    const s = search.status;
+    return s === "belum" || s === "lunas" || s === "batal" ? { status: s } : {};
+  },
   head: () => ({
     meta: [
       { title: "Riwayat Nota & Rekap Omset Harian UMKM · Notaku" },
@@ -104,8 +111,10 @@ function RiwayatList() {
   const notes = notesQ.data ?? [];
   const loading = notesQ.isPending;
 
+  const initialStatus = Route.useSearch({ select: (s) => s.status });
   const [q, setQ] = useState("");
   const [period, setPeriod] = useState<Period>("all");
+  const [status, setStatus] = useState<StatusFilter>(initialStatus ?? "all");
   const [range, setRange] = useState<{ from?: Date; to?: Date } | undefined>();
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [tag, setTag] = useState<string | null>(null);
@@ -152,6 +161,7 @@ function RiwayatList() {
         if (op === "<=" && !(t <= value)) return false;
       }
       if (tag && !n.tags.includes(tag)) return false;
+      if (status !== "all" && n.status !== status) return false;
       if (period === "custom" && fromYMD && toYMD) {
         const ymd = n.date.slice(0, 10);
         if (ymd < fromYMD || ymd > toYMD) return false;
@@ -162,7 +172,7 @@ function RiwayatList() {
       }
       return true;
     });
-  }, [notes, textQ, parsedAmount, period, range, tag]);
+  }, [notes, textQ, parsedAmount, period, range, tag, status]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -197,10 +207,11 @@ function RiwayatList() {
     return `${f} – ${t}`;
   })();
 
-  const hasActiveFilter = !!q || period !== "all" || !!tag;
+  const hasActiveFilter = !!q || period !== "all" || !!tag || status !== "all";
+  const showStatusFilter = status !== "all" || notes.some((n) => n.status !== "lunas");
 
   function resetFilters() {
-    setQ(""); setPeriod("all"); setRange(undefined); setTag(null);
+    setQ(""); setPeriod("all"); setRange(undefined); setTag(null); setStatus("all");
   }
 
   function toggleSel(id: string) {
@@ -242,7 +253,7 @@ function RiwayatList() {
       <h1 className="sr-only">Riwayat Nota & Rekap Omset Harian</h1>
 
       <div className="rounded-2xl bg-card border border-border shadow-soft p-4 space-y-2">
-        <div className="text-[11px] text-muted-foreground uppercase tracking-wider">{periodLabel}{tag ? ` · #${tag}` : ""}</div>
+        <div className="text-[11px] text-muted-foreground uppercase tracking-wider">{periodLabel}{status !== "all" ? ` · ${STATUS_LABELS[status]}` : ""}{tag ? ` · #${tag}` : ""}</div>
         <div className="grid grid-cols-3 gap-2">
           <Stat label="Nota" value={String(summary.count)} />
           <Stat label="Omset" value={formatIDR(summary.omset)} />
@@ -318,6 +329,21 @@ function RiwayatList() {
         </Popover>
       </div>
 
+
+      {showStatusFilter && (
+        <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
+          {(["all", "belum", "lunas", "batal"] as StatusFilter[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatus(s)}
+              className={"tap shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium border " + (status === s ? "bg-primary text-primary-foreground border-primary shadow-soft" : "bg-card text-muted-foreground border-border")}
+            >
+              {s === "all" ? "Semua status" : STATUS_LABELS[s]}
+            </button>
+          ))}
+        </div>
+      )}
 
       {allTags.length > 0 && (
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
@@ -497,6 +523,11 @@ function NoteRow({ note: n, q, selectMode, checked, onLongPress, onToggle }: {
           <div className="font-medium truncate text-[15px]">{highlight(n.customerName || "Tanpa nama", q)}</div>
           <div className="text-xs text-muted-foreground mt-0.5 truncate flex items-center gap-1 flex-wrap">
             <span>{highlight(n.number, q)} · {n.items.length} item</span>
+            {n.status !== "lunas" && (
+              <span className={cn("inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium", statusTone(n))}>
+                {STATUS_LABELS[n.status]}
+              </span>
+            )}
             {n.tags.map((tg) => (
               <span key={tg} className="inline-flex items-center gap-0.5 rounded-full bg-accent text-foreground/70 px-1.5 py-0.5 text-[10px]">
                 <Tag className="h-2.5 w-2.5" />{tg}

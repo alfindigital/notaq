@@ -8,10 +8,10 @@ import {
 import { toast } from "sonner";
 
 import {
-  db, calcNoteTotals, deriveCustomers, deriveTags,
+  db, calcNoteTotals, calcLineSubtotal, deriveCustomers, deriveTags,
   generateNoteNumber, uid,
-  PAYMENT_METHODS, PAYMENT_LABELS,
-  type Note, type NoteItem, type Preset, type PaymentMethod,
+  PAYMENT_METHODS, PAYMENT_LABELS, NOTE_STATUSES, STATUS_LABELS, TAX_TYPES,
+  type Note, type NoteItem, type Preset, type PaymentMethod, type NoteStatus, type TaxType, type DiscountType,
 } from "@/lib/storage";
 import { formatIDR, formatIDRInput, parseIDRInput, toDateInput } from "@/lib/format";
 import { tapHaptic } from "@/lib/haptic";
@@ -85,14 +85,19 @@ type Draft = {
   customerPhone: string;
   items: NoteItem[];
   discount: number;
+  taxType: TaxType;
+  customTaxRate: number;
+  shippingCost: number;
   paymentMethod: PaymentMethod;
   cashReceived: number;
+  status: NoteStatus;
+  dueDate: string;
   tags: string[];
   noteText: string;
   updatedAt: number;
 };
 
-function emptyItem(): NoteItem { return { name: "", qty: 1, price: 0, cost: 0 }; }
+function emptyItem(): NoteItem { return { name: "", qty: 1, price: 0, cost: 0, discountType: "amount", discountValue: 0 }; }
 
 function loadDraft(): Draft | null {
   if (typeof window === "undefined") return null;
@@ -162,8 +167,13 @@ function BuatPage() {
   const [customerPhone, setCustomerPhone] = useState(initial?.customerPhone ?? "");
   const [items, setItems] = useState<NoteItem[]>(initial?.items?.length ? initial.items : [emptyItem()]);
   const [discount, setDiscount] = useState<number>(initial?.discount ?? 0);
+  const [taxType, setTaxType] = useState<TaxType>(initial?.taxType ?? "none");
+  const [customTaxRate, setCustomTaxRate] = useState<number>(initial?.customTaxRate ?? 0);
+  const [shippingCost, setShippingCost] = useState<number>(initial?.shippingCost ?? 0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? "tunai");
   const [cashReceived, setCashReceived] = useState<number>(initial?.cashReceived ?? 0);
+  const [status, setStatus] = useState<NoteStatus>(initial?.status ?? "lunas");
+  const [dueDate, setDueDate] = useState<string>(initial?.dueDate ?? "");
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [noteText, setNoteText] = useState(initial?.noteText ?? "");
   const hadInitialDraft = useRef(!!initial && !isDraftEmpty({ customerName: initial.customerName, customerPhone: initial.customerPhone, items: initial.items, discount: initial.discount, tags: initial.tags ?? [], noteText: initial.noteText }));
@@ -185,8 +195,10 @@ function BuatPage() {
     setCustomerName(src.customerName); setCustomerPhone(src.customerPhone);
     setItems(src.items.map((it) => ({ ...it })));
     setDiscount(src.discount);
+    setTaxType(src.taxType); setCustomTaxRate(src.customTaxRate); setShippingCost(src.shippingCost);
     setPaymentMethod(src.paymentMethod);
     setCashReceived(src.cashReceived);
+    setStatus(src.status); setDueDate(src.dueDate);
     setTags([...src.tags]);
     setNoteText(src.note);
   }, [editingId, fromId, notes]);
@@ -194,7 +206,7 @@ function BuatPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (editingId || fromId) return;
-    const draft = { date, customerName, customerPhone, items, discount, paymentMethod, cashReceived, tags, noteText };
+    const draft = { date, customerName, customerPhone, items, discount, taxType, customTaxRate, shippingCost, paymentMethod, cashReceived, status, dueDate, tags, noteText };
     const t = setTimeout(() => {
       try {
         if (isDraftEmpty(draft)) localStorage.removeItem(DRAFT_KEY);
@@ -204,7 +216,7 @@ function BuatPage() {
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [date, customerName, customerPhone, items, discount, paymentMethod, cashReceived, tags, noteText, editingId, fromId]);
+  }, [date, customerName, customerPhone, items, discount, taxType, customTaxRate, shippingCost, paymentMethod, cashReceived, status, dueDate, tags, noteText, editingId, fromId]);
 
   useEffect(() => {
     if (hadInitialDraft.current) { toast.success("Draf dipulihkan"); hadInitialDraft.current = false; }
@@ -224,7 +236,7 @@ function BuatPage() {
   const phoneSuggestions = useMemo(() => (customerPhone.trim() ? customers.filter((c) => matchCustomer(customerPhone, c)).slice(0, 5) : []), [customers, customerPhone]);
   const recentCustomers = useMemo(() => [...customers].sort((a, b) => (a.lastDate < b.lastDate ? 1 : -1)).slice(0, 4), [customers]);
 
-  const totals = useMemo(() => calcNoteTotals({ items, discount }), [items, discount]);
+  const totals = useMemo(() => calcNoteTotals({ items, discount, taxType, customTaxRate, shippingCost }), [items, discount, taxType, customTaxRate, shippingCost]);
 
   function updateItem(i: number, patch: Partial<NoteItem>) {
     setItems((arr) => arr.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
@@ -234,7 +246,7 @@ function BuatPage() {
   function addPreset(p: Preset) {
     setItems((a) => {
       const empty = a.findIndex((it) => !it.name && !it.price);
-      const row: NoteItem = { name: p.name, qty: 1, price: p.price, cost: p.cost };
+      const row: NoteItem = { name: p.name, qty: 1, price: p.price, cost: p.cost, discountType: "amount", discountValue: 0 };
       if (empty >= 0) return a.map((it, i) => (i === empty ? row : it));
       return [...a, row];
     });
@@ -271,8 +283,12 @@ function BuatPage() {
           customerPhone: customerPhone.trim(),
           items: cleaned,
           discount,
+          taxType, customTaxRate, shippingCost,
           paymentMethod,
           cashReceived: paymentMethod === "tunai" ? cashReceived : 0,
+          status,
+          dueDate: status === "belum" ? dueDate : "",
+          paidDate: status === "lunas" ? (existing.paidDate || now) : "",
           tags,
           note: noteText.trim(),
           date: new Date(date + "T" + new Date(existing.date).toISOString().slice(11, 19)).toISOString(),
@@ -289,8 +305,11 @@ function BuatPage() {
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
         items: cleaned, discount,
+        taxType, customTaxRate, shippingCost,
         paymentMethod,
         cashReceived: paymentMethod === "tunai" ? cashReceived : 0,
+        status, dueDate: status === "belum" ? dueDate : "",
+        paidDate: status === "lunas" ? now : "",
         tags, note: noteText.trim(),
         createdAt: now, updatedAt: now,
       };
@@ -415,11 +434,17 @@ function BuatPage() {
       </section>
 
 
-      {/* Inline chips: Tambah item, Diskon, Tag, Catatan */}
+      {/* Inline chips: Tambah item, Diskon, Pajak, Ongkir, Tag, Catatan */}
       <ExtrasRow
         onAddItem={addRow}
         discount={discount}
         setDiscount={setDiscount}
+        taxType={taxType}
+        setTaxType={setTaxType}
+        customTaxRate={customTaxRate}
+        setCustomTaxRate={setCustomTaxRate}
+        shippingCost={shippingCost}
+        setShippingCost={setShippingCost}
         tags={tags}
         setTags={setTags}
         tagSuggestions={allTags.map((t) => t.tag)}
@@ -431,8 +456,10 @@ function BuatPage() {
       {/* Summary */}
       <div className="rounded-2xl bg-card border border-border shadow-soft p-3 space-y-1.5 text-sm">
         <Row label="Subtotal" value={formatIDR(totals.subtotal)} muted />
-        {discount > 0 && <Row label="Diskon" value={"− " + formatIDR(discount)} muted />}
-        
+        {totals.noteDiscount > 0 && <Row label="Diskon" value={"− " + formatIDR(totals.noteDiscount)} muted />}
+        {totals.taxRate > 0 && <Row label={`Pajak (${totals.taxRate}%)`} value={"+ " + formatIDR(totals.taxAmount)} muted />}
+        {totals.shipping > 0 && <Row label="Ongkir" value={"+ " + formatIDR(totals.shipping)} muted />}
+
         <div className="h-px bg-border my-1" />
         <div className="flex items-end justify-between">
           <span className="text-muted-foreground">Total</span>
@@ -440,14 +467,19 @@ function BuatPage() {
         </div>
       </div>
 
-      {/* Pembayaran */}
-      <PaymentSection
-        total={totals.total}
-        paymentMethod={paymentMethod}
-        setPaymentMethod={setPaymentMethod}
-        cashReceived={cashReceived}
-        setCashReceived={setCashReceived}
-      />
+      {/* Status pembayaran */}
+      <StatusSection status={status} setStatus={setStatus} dueDate={dueDate} setDueDate={setDueDate} />
+
+      {/* Pembayaran (hanya bila sudah dibayar) */}
+      {status !== "belum" && (
+        <PaymentSection
+          total={totals.total}
+          paymentMethod={paymentMethod}
+          setPaymentMethod={setPaymentMethod}
+          cashReceived={cashReceived}
+          setCashReceived={setCashReceived}
+        />
+      )}
 
       <Button size="lg" className="tap w-full h-12 rounded-full shadow-pop text-[15px] font-semibold" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
         <Check className="h-4 w-4" />
@@ -460,6 +492,130 @@ function BuatPage() {
 
 function Row({ label, value, muted }: { label: React.ReactNode; value: React.ReactNode; muted?: boolean }) {
   return <div className={cn("flex justify-between", muted && "text-muted-foreground")}><span>{label}</span><span className="tabular-nums">{value}</span></div>;
+}
+
+function StatusSection({ status, setStatus, dueDate, setDueDate }: {
+  status: NoteStatus; setStatus: (s: NoteStatus) => void; dueDate: string; setDueDate: (v: string) => void;
+}) {
+  // Saat buat nota hanya Lunas / Belum bayar (Batal diatur dari detail).
+  return (
+    <section className="space-y-2">
+      <SectionLabel>Status</SectionLabel>
+      <div className="flex items-center gap-1.5">
+        {(["lunas", "belum"] as NoteStatus[]).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => { tapHaptic(); setStatus(s); if (s === "belum" && !dueDate) setDueDate(toDateInput(new Date(Date.now() + 7 * 86_400_000).toISOString())); }}
+            className={cn(
+              "tap flex-1 rounded-full px-3 py-2 text-xs font-medium border",
+              status === s
+                ? (s === "belum" ? "bg-amber-500 text-white border-amber-500 shadow-soft" : "bg-primary text-primary-foreground border-primary shadow-soft")
+                : "bg-card text-muted-foreground border-border hover:text-foreground",
+            )}
+          >
+            {STATUS_LABELS[s]}
+          </button>
+        ))}
+        {status === "belum" && (
+          <div className="shrink-0">
+            <DateChip date={dueDate || toDateInput(new Date().toISOString())} onChange={setDueDate} />
+          </div>
+        )}
+      </div>
+      {status === "belum" && (
+        <p className="t-caption px-1">Jatuh tempo {dueDate ? new Date(dueDate + "T00:00:00").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—"} · masuk piutang.</p>
+      )}
+    </section>
+  );
+}
+
+function TaxChip({ taxType, setTaxType, customTaxRate, setCustomTaxRate }: {
+  taxType: TaxType; setTaxType: (t: TaxType) => void; customTaxRate: number; setCustomTaxRate: (n: number) => void;
+}) {
+  const active = taxType !== "none";
+  const label = taxType === "ppn11" ? "PPN 11%" : taxType === "custom" ? `Pajak ${customTaxRate || 0}%` : null;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "tap inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs shadow-soft",
+            active ? "bg-accent/60 text-foreground" : "bg-card border border-border border-dashed text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {active ? label : <><Plus className="h-3 w-3" /> Pajak</>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-2 space-y-1.5" align="start">
+        {(TAX_TYPES).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTaxType(t)}
+            className={cn("tap w-full text-left px-2.5 py-2 text-sm rounded-lg hover:bg-accent flex items-center justify-between", taxType === t ? "text-foreground font-medium" : "text-muted-foreground")}
+          >
+            {t === "none" ? "Tanpa pajak" : t === "ppn11" ? "PPN 11%" : "Pajak custom"}
+            {taxType === t && <Check className="h-3.5 w-3.5" />}
+          </button>
+        ))}
+        {taxType === "custom" && (
+          <div className="relative pt-1">
+            <Input
+              aria-label="Tarif pajak custom (%)"
+              inputMode="decimal" placeholder="Tarif %"
+              value={customTaxRate || ""}
+              onChange={(e) => setCustomTaxRate(Math.min(100, parseIDRInput(e.target.value)))}
+              onFocus={(e) => e.target.select()}
+              className="h-9 rounded-xl border-border bg-card pr-7 text-right"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">%</span>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ShippingChip({ shippingCost, setShippingCost }: { shippingCost: number; setShippingCost: (n: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string>(shippingCost ? formatIDRInput(shippingCost) : "");
+  useEffect(() => { if (!open) setDraft(shippingCost ? formatIDRInput(shippingCost) : ""); }, [shippingCost, open]);
+  const has = shippingCost > 0;
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setShippingCost(parseIDRInput(draft)); }}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "tap inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs shadow-soft",
+            has ? "bg-accent/60 text-foreground" : "bg-card border border-border border-dashed text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {has ? <>Ongkir {formatIDR(shippingCost)}</> : <><Plus className="h-3 w-3" /> Ongkir</>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-2" align="start">
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">Rp</span>
+          <Input
+            aria-label="Biaya ongkir"
+            inputMode="decimal" enterKeyHint="done" placeholder="0"
+            value={draft}
+            onChange={(e) => setDraft(formatIDRInput(parseIDRInput(e.target.value)))}
+            onFocus={(e) => e.target.select()}
+            onKeyDown={(e) => { if (e.key === "Enter") { setShippingCost(parseIDRInput(draft)); setOpen(false); } }}
+            className="h-10 rounded-xl border-border bg-card pl-8"
+            autoFocus
+          />
+        </div>
+        {has && (
+          <button type="button" onClick={() => { setDraft(""); setShippingCost(0); setOpen(false); }} className="mt-2 w-full text-left text-[11px] text-muted-foreground hover:text-destructive px-1">Hapus ongkir</button>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function cashSuggestions(total: number): number[] {
@@ -574,7 +730,10 @@ function PaymentSection({
 type ItemRowProps = { item: NoteItem; presets?: Preset[]; onChange: (p: Partial<NoteItem>) => void; onRemove?: () => void };
 const ItemRow = memo(({ item, presets = [], onChange, onRemove }: ItemRowProps) => {
   const [showCost] = useState(item.cost > 0);
+  const [showDisc, setShowDisc] = useState(item.discountValue > 0);
   const [focused, setFocused] = useState(false);
+  const lineSub = calcLineSubtotal(item);
+  const hasLineDisc = item.discountValue > 0 && lineSub < item.qty * item.price;
   const sugs = useMemo(() => {
     const q = item.name.trim().toLowerCase();
     if (!q) return [];
@@ -648,6 +807,33 @@ const ItemRow = memo(({ item, presets = [], onChange, onRemove }: ItemRowProps) 
           </div>
         </div>
       )}
+      {showDisc ? (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground shrink-0 pl-1">Diskon</span>
+          <div className="inline-flex rounded-full bg-surface overflow-hidden shrink-0">
+            {(["amount", "percent"] as DiscountType[]).map((dt) => (
+              <button
+                key={dt} type="button"
+                onClick={() => { tapHaptic(); onChange({ discountType: dt }); }}
+                className={cn("h-9 w-9 grid place-items-center text-[12px] font-medium", item.discountType === dt ? "bg-primary text-primary-foreground" : "text-muted-foreground")}
+              >
+                {dt === "amount" ? "Rp" : "%"}
+              </button>
+            ))}
+          </div>
+          <input
+            aria-label="Nilai diskon item"
+            inputMode="decimal" placeholder="0"
+            value={item.discountType === "percent" ? (item.discountValue || "") : formatIDRInput(item.discountValue)}
+            onChange={(e) => onChange({ discountValue: item.discountType === "percent" ? Math.min(100, parseIDRInput(e.target.value)) : parseIDRInput(e.target.value) })}
+            onFocus={(e) => e.target.select()}
+            className="flex-1 h-9 px-3 bg-surface rounded-full text-right focus:outline-none"
+          />
+          {hasLineDisc && <span className="text-muted-foreground tabular-nums shrink-0">= {formatIDR(lineSub)}</span>}
+        </div>
+      ) : (
+        <button type="button" onClick={() => { tapHaptic(); setShowDisc(true); }} className="tap text-[11px] text-muted-foreground hover:text-foreground pl-1">+ Diskon item</button>
+      )}
       <div className="absolute top-1 right-1 flex items-center">
         {onRemove && (
           <button type="button" onClick={() => { tapHaptic(); onRemove(); }} className="tap inline-flex items-center justify-center w-9 h-9 text-muted-foreground hover:text-destructive rounded-full" aria-label="Hapus baris">
@@ -660,10 +846,14 @@ const ItemRow = memo(({ item, presets = [], onChange, onRemove }: ItemRowProps) 
 });
 
 function ExtrasRow({
-  onAddItem, discount, setDiscount, tags, setTags, tagSuggestions, noteText, setNoteText,
+  onAddItem, discount, setDiscount, taxType, setTaxType, customTaxRate, setCustomTaxRate,
+  shippingCost, setShippingCost, tags, setTags, tagSuggestions, noteText, setNoteText,
 }: {
   onAddItem?: () => void;
   discount: number; setDiscount: (n: number) => void;
+  taxType: TaxType; setTaxType: (t: TaxType) => void;
+  customTaxRate: number; setCustomTaxRate: (n: number) => void;
+  shippingCost: number; setShippingCost: (n: number) => void;
   tags: string[]; setTags: (v: string[]) => void; tagSuggestions: string[];
   noteText: string; setNoteText: (v: string) => void;
 }) {
@@ -685,6 +875,10 @@ function ExtrasRow({
       )}
       {/* Diskon */}
       <DiscountChip discount={discount} setDiscount={setDiscount} />
+      {/* Pajak */}
+      <TaxChip taxType={taxType} setTaxType={setTaxType} customTaxRate={customTaxRate} setCustomTaxRate={setCustomTaxRate} />
+      {/* Ongkir */}
+      <ShippingChip shippingCost={shippingCost} setShippingCost={setShippingCost} />
 
 
       {/* Tags */}

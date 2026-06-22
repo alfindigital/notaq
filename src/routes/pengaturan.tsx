@@ -144,6 +144,13 @@ function BusinessSection() {
     reader.readAsDataURL(file);
   }
 
+  async function onQris(file: File) {
+    if (file.size > 300_000) { toast.error("Gambar QRIS maksimum 300KB"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setForm((f) => ({ ...f, qrisImage: String(reader.result) }));
+    reader.readAsDataURL(file);
+  }
+
   return (
     <Section title="Bisnis">
       <Card className="p-4 space-y-4">
@@ -182,6 +189,48 @@ function BusinessSection() {
             <Input value={form.receiptFooter} maxLength={120} onChange={(e) => setForm({ ...form, receiptFooter: e.target.value })} placeholder="Terima kasih" className="h-10 rounded-xl mt-1" />
           </div>
         </div>
+
+        {/* Rekening transfer & QRIS — tampil di struk untuk pembayaran non-tunai */}
+        <div className="pt-1 border-t border-border/60 space-y-3">
+          <p className="t-eyebrow">Rekening & QRIS <span className="font-normal text-muted-foreground normal-case">(opsional)</span></p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs text-muted-foreground">Nama bank</Label>
+              <Input value={form.bankName} maxLength={40} onChange={(e) => setForm({ ...form, bankName: e.target.value })} placeholder="BCA" className="h-10 rounded-xl mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">No. rekening</Label>
+              <Input value={form.bankAccount} maxLength={40} inputMode="numeric" onChange={(e) => setForm({ ...form, bankAccount: e.target.value })} placeholder="1234567890" className="h-10 rounded-xl mt-1" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs text-muted-foreground">Atas nama</Label>
+            <Input value={form.bankHolder} maxLength={60} onChange={(e) => setForm({ ...form, bankHolder: e.target.value })} placeholder="Nama pemilik rekening" className="h-10 rounded-xl mt-1" />
+          </div>
+          <div className="flex gap-3 items-center">
+            <label className="w-16 h-16 shrink-0 rounded-2xl border border-dashed border-border flex items-center justify-center overflow-hidden cursor-pointer bg-surface tap" aria-label="Unggah gambar QRIS">
+              {form.qrisImage ? (
+                <img src={form.qrisImage} alt="QRIS" className="w-full h-full object-contain" />
+              ) : (
+                <Upload className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+              )}
+              <input
+                type="file" accept="image/*" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) onQris(f); }}
+              />
+            </label>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">Gambar QRIS statis</p>
+              <p className="t-caption mt-0.5">Muncul di struk saat metode QRIS. Maks 300KB.</p>
+              {form.qrisImage && (
+                <button className="mt-1 text-xs text-muted-foreground hover:text-destructive" onClick={() => setForm({ ...form, qrisImage: "" })}>
+                  Hapus QRIS
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between pt-1">
           {form.logo ? (
             <button className="text-xs text-muted-foreground hover:text-destructive" onClick={() => setForm({ ...form, logo: "" })}>
