@@ -1,7 +1,7 @@
 // Notaku service worker — stale-while-revalidate untuk app shell.
 // Strategi: cache instant utk first paint, fetch di background utk update.
 // Bump CACHE_VERSION untuk invalidate cache saat deploy.
-const CACHE_VERSION = "notaku-v2";
+const CACHE_VERSION = "notaku-v3";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
@@ -11,6 +11,8 @@ const PRECACHE_URLS = [
   "/",
   "/buat",
   "/riwayat",
+  "/laporan",
+  "/pengeluaran",
   "/pengaturan",
   "/manifest.json",
   "/icon-192.png",

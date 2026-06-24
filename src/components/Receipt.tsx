@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import type { Business, Note } from "@/lib/storage";
-import { calcNoteTotals } from "@/lib/storage";
+import { calcNoteTotals, calcLineSubtotal, PAYMENT_LABELS } from "@/lib/storage";
 import { formatIDR, formatDateTime } from "@/lib/format";
 
 interface Props { note: Note; business: Business }
@@ -38,13 +39,55 @@ export const Receipt = forwardRef<HTMLDivElement, Props>(function Receipt({ note
       {note.items.map((it, i) => (
         <div key={i} style={{ marginBottom: 4 }}>
           <div>{it.name}</div>
-          <Row left={`  ${it.qty} × ${formatIDR(it.price)}`} right={formatIDR(it.qty * it.price)} />
+          <Row left={`  ${it.qty} × ${formatIDR(it.price)}`} right={formatIDR(calcLineSubtotal(it))} />
+          {it.discountValue > 0 ? (
+            <div style={{ fontSize: 10, color: "#6b7280" }}>
+              {`  diskon ${it.discountType === "percent" ? it.discountValue + "%" : formatIDR(it.discountValue)}`}
+            </div>
+          ) : null}
         </div>
       ))}
       <Divider />
       <Row left="Subtotal" right={formatIDR(totals.subtotal)} />
-      {note.discount > 0 ? <Row left="Diskon" right={"- " + formatIDR(note.discount)} /> : null}
+      {totals.noteDiscount > 0 ? <Row left="Diskon" right={"- " + formatIDR(totals.noteDiscount)} /> : null}
+      {totals.taxRate > 0 ? <Row left={`Pajak (${totals.taxRate}%)`} right={formatIDR(totals.taxAmount)} /> : null}
+      {totals.shipping > 0 ? <Row left="Ongkir" right={formatIDR(totals.shipping)} /> : null}
       <Row left={<strong>TOTAL</strong>} right={<strong>{formatIDR(totals.total)}</strong>} bold />
+      <Divider />
+      <Row left="Bayar" right={PAYMENT_LABELS[note.paymentMethod]} />
+      {note.paymentMethod === "tunai" && note.cashReceived > 0 ? (
+        <>
+          <Row left="Tunai" right={formatIDR(note.cashReceived)} />
+          <Row left="Kembali" right={formatIDR(Math.max(0, note.cashReceived - totals.total))} />
+        </>
+      ) : null}
+      {note.status === "belum" ? (
+        <div style={{ textAlign: "center", marginTop: 6, fontWeight: 700, color: "#b45309", border: "1px solid #b45309", borderRadius: 6, padding: "2px 0" }}>
+          BELUM LUNAS{note.dueDate ? ` · jatuh tempo ${formatDateTime(note.dueDate + "T00:00:00").split(" · ")[0]}` : ""}
+        </div>
+      ) : null}
+      {/* Rekening transfer / QRIS */}
+      {note.paymentMethod === "qris" && business.qrisImage ? (
+        <>
+          <Divider />
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 11, marginBottom: 4 }}>Scan QRIS</div>
+            <img src={business.qrisImage} alt="QRIS" style={{ height: 120, margin: "0 auto", display: "block" }} />
+          </div>
+        </>
+      ) : business.bankName ? (
+        <>
+          <Divider />
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+            <div style={{ fontSize: 11 }}>
+              <div style={{ fontWeight: 700 }}>Transfer ke:</div>
+              <div>{business.bankName} {business.bankAccount}</div>
+              <div>a/n {business.bankHolder}</div>
+            </div>
+            <QRCodeSVG value={`Transfer ${business.bankName} ${business.bankAccount} a/n ${business.bankHolder} | ${formatIDR(totals.total)}`} size={56} />
+          </div>
+        </>
+      ) : null}
       <Divider />
       {note.note ? (
         <div style={{ marginTop: 4, fontStyle: "italic" }}>Catatan: {note.note}</div>

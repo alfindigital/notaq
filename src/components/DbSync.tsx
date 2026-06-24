@@ -8,6 +8,7 @@ const KEY_TO_QUERIES: Record<string, string[][]> = {
   business: [["business"]],
   presets: [["presets"]],
   notes: [["notes"]],
+  expenses: [["expenses"]],
   seq: [["seq"]],
   prefs: [["prefs"]],
 };

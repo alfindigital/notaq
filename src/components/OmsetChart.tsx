@@ -3,7 +3,9 @@ import { formatIDR, formatDateID } from "@/lib/format";
 
 type Bucket = { date: string; omset: number };
 
-function OmsetChart({ buckets }: { buckets: Bucket[] }) {
+const defaultLabel = (b: Bucket) => formatDateID(b.date + "T00:00:00");
+
+function OmsetChart({ buckets, labelFor = defaultLabel }: { buckets: Bucket[]; labelFor?: (b: Bucket) => string }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(1, ...buckets.map((b) => b.omset));
   const n = buckets.length || 1;
@@ -45,7 +47,7 @@ function OmsetChart({ buckets }: { buckets: Bucket[] }) {
           className="pointer-events-none absolute top-0 -translate-x-1/2 rounded-lg border border-border bg-popover px-2 py-1 text-[11px] shadow-soft"
           style={{ left: `${((hover + 0.5) / n) * 100}%` }}
         >
-          <div className="text-muted-foreground">{formatDateID(buckets[hover].date + "T00:00:00")}</div>
+          <div className="text-muted-foreground">{labelFor(buckets[hover])}</div>
           <div className="font-medium">{formatIDR(buckets[hover].omset)}</div>
         </div>
       )}

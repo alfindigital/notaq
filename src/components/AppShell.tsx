@@ -1,10 +1,11 @@
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
-import { Home, History, Plus, Receipt, Settings } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Home, History, Plus, Receipt, Settings, BarChart3 } from "lucide-react";
+import { cn, isTabActive } from "@/lib/utils";
+// Regular tabs flank a center "Buat" FAB: Beranda · Riwayat · ⊕ · Laporan · Pengaturan.
 const tabs = [
   { to: "/", label: "Beranda", icon: Home, exact: true },
-  { to: "/buat", label: "Buat", icon: Plus },
   { to: "/riwayat", label: "Riwayat", icon: History },
+  { to: "/laporan", label: "Laporan", icon: BarChart3 },
   { to: "/pengaturan", label: "Pengaturan", icon: Settings },
 ] as const;
 
@@ -36,10 +37,12 @@ export function AppShell() {
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
       >
         <div className="mx-auto w-full max-w-md px-3 pointer-events-auto">
-          <div className="grid grid-cols-4 gap-1 rounded-full bg-primary text-primary-foreground backdrop-blur-md border border-primary/40 shadow-nav p-2">
-            {tabs.map((tab) => (
-              <TabButton key={tab.to} tab={tab} pathname={pathname} />
-            ))}
+          <div className="grid grid-cols-5 items-center gap-1 rounded-full bg-primary text-primary-foreground backdrop-blur-md border border-primary/40 shadow-nav p-2">
+            <TabButton tab={tabs[0]} pathname={pathname} />
+            <TabButton tab={tabs[1]} pathname={pathname} />
+            <BuatFab pathname={pathname} />
+            <TabButton tab={tabs[2]} pathname={pathname} />
+            <TabButton tab={tabs[3]} pathname={pathname} />
           </div>
         </div>
       </nav>
@@ -47,16 +50,30 @@ export function AppShell() {
   );
 }
 
+function BuatFab({ pathname }: { pathname: string }) {
+  const active = isTabActive(pathname, "/buat");
+  return (
+    <Link
+      to="/buat"
+      preload="render"
+      aria-label="Buat nota"
+      aria-current={active ? "page" : undefined}
+      className="tap grid place-items-center mx-auto h-12 w-12 -translate-y-2 rounded-full bg-background text-primary shadow-pop ring-4 ring-background transition-transform active:scale-95"
+    >
+      <Plus className="h-6 w-6" strokeWidth={2.6} />
+    </Link>
+  );
+}
+
 function TabButton({ tab, pathname }: { tab: typeof tabs[number]; pathname: string }) {
-  const active = "exact" in tab && tab.exact
-    ? pathname === tab.to
-    : pathname === tab.to || pathname.startsWith(tab.to + "/");
+  const active = isTabActive(pathname, tab.to, "exact" in tab && tab.exact);
   const Icon = tab.icon;
   return (
     <Link
       to={tab.to}
       preload="render"
       aria-label={tab.label}
+      aria-current={active ? "page" : undefined}
       className={cn(
         "tap relative grid place-items-center py-2 rounded-full transition-colors",
         active
