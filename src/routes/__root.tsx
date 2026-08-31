@@ -27,7 +27,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: "Notaku" },
       { property: "og:locale", content: "id_ID" },
-      { name: "google-site-verification", content: "J-Czc4w4Dto_XXTUZfW8lAMoT45CpTWqZ72Nt91yFbw" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
@@ -144,3 +143,4 @@ function RootComponent() {
     </QueryClientProvider>
   );
 }
+
